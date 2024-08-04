@@ -1,0 +1,240 @@
+---
+9title: "Untitled"
+author: "Tania"
+date: "2023-09-20"
+output: html_document
+---
+## Data-preprocessing
+```{r}
+library(rayshader)
+library(raster)
+library(dplyr)
+library(ggplot2)
+library(car)
+library(leaflet)
+library(RColorBrewer)
+library(magick)
+library(animation)
+library(osmdata)
+library(sf)
+library(viridis) 
+library(terra)
+library(av)
+```
+
+
+```{r}
+datatiff <-  rast("dataset/DEMNAS_Jatiluhur.tif")
+```
+```{r}
+ext(datatiff)
+```
+```{r}
+new_extent <- ext (107.16, 107.4, -6.65, -6.5)
+
+croptiff <- crop(datatiff, y = new_extent)
+```
+```{r}
+writeRaster(croptiff, filename = "path/hasil_crop2.tif", overwrite = TRUE)
+```
+
+
+```{r}
+plot(datatiff)
+plot(croptiff)
+```
+```{r}
+# add bounding box to add osm map
+lat_range  <-  c(-6.65, -6.5)
+long_range <- c(107.16, 107.4)
+tiffmat <- raster_to_matrix(croptiff)
+```
+```{r}
+# Resize
+tiff_bali <- resize_matrix(heightmap = tiffmat, scale = 0.4)
+```
+
+```{r}
+palet <-rev(terrain.colors(50))
+
+# Definisikan palette warna berdasarkan elevasi dalam data raster
+pal <- colorNumeric(palet,
+                    values(croptiff),
+                    na.color = "transparent")
+
+
+# Konversi data raster dari terra ke raster
+croptiff_raster <- raster(croptiff)
+
+# leaflet() %>%
+#   addProviderTiles("Stamen.Terrain") %>%
+#   addRasterImage(croptiff_raster, colors = pal, opacity = 0.6) %>%
+#   addLegend(pal = pal, values = values(croptiff), title = "Elevasi")
+
+leaflet() %>%
+  addProviderTiles("Stamen.Terrain") %>%
+  addRasterImage(croptiff_raster, colors = pal, opacity = 0.5) %>%
+  addLegend(pal=pal, values = values(croptiff), title = "Elevasi")
+```
+```{r}
+tiff_bali %>% height_shade() %>% plot_map()
+```
+```{r}
+tiff_bali %>% sphere_shade(texture = "desert") %>% plot_map()
+```
+```{r}
+tiff_bali %>% 
+  sphere_shade(texture = "desert") %>% 
+  add_water(detect_water(tiff_bali), color="desert") %>%
+  plot_map()
+```
+```{r}
+tiff_bali %>% 
+  sphere_shade(texture = "desert") %>% 
+  add_water(detect_water(tiff_bali), color="desert") %>%
+  add_shadow(ray_shade(tiff_bali)) %>%
+  plot_3d(tiff_bali, zscale = 6)%>%
+  plot_map()
+```
+```{r}
+montshadow = ray_shade(tiff_bali, zscale = 6, lambert = FALSE)
+montamb = ambient_shade(tiff_bali, zscale = 6)
+
+# add 3d map
+tiff_bali %>%
+  sphere_shade(texture = "imhof1") %>%
+  add_shadow(montshadow, 0.5) %>%
+  add_shadow(montamb, 0) %>%
+  add_water(detect_water(tiff_bali), color = "lightblue") %>%
+  plot_3d(tiff_bali, zscale = 6, fov = 0, theta = 60, zoom = 0.75, phi = 45)
+
+# add scalebar
+render_scalebar(limits = c(0, 5, 10),label_unit = "km", position = "W", y = 50,
+                scale_length = c(0.33,1))
+# add compass
+render_compass(position = "E")
+#
+# `av` package required for render_movie()
+# magick::image_annotate -> untuk menggunakan title
+
+render_movie(filename = "3D_JatiluhurReservoir.mp4", type = "oscillate",
+            frames = 60, fps = 30,  phi = 30, theta = 90,
+            title_text = "Reservoir Jatiluhur 3D Map Using Rayshader Packages 2")
+```
+```{r}
+## Run code below
+# Definisikan dulu CRS untuk EPSG:4326
+crs_4326 <- CRS("EPSG:4326")
+
+# koordinat batas area kajian untuk crop raster diatas
+lat_range  <-  c(-6.64, -6.5)
+long_range <- c(107.16, 107.4)
+
+# Buat bounding box dari lat_range dan long_range
+bbox <- c(long_range[1], long_range[2], lat_range[1], lat_range[2])
+
+# Hasilkan objek SpatExtent
+bbox <- ext(bbox)
+bbox
+```
+```{r}
+osm_bbox <- c(left = 116.3, bottom = -8.5, right = 116.5, top = -8.3)
+
+# Query OSM data untuk layer jaringan jalan
+rinjani_highway <- opq(bbox = osm_bbox) %>%
+  add_osm_feature(key = "highway") %>%
+osmdata_sf()
+```
+
+```{r}
+unique(rinjani_highway$osm_lines$highway)
+```
+```{r}
+ggplot() +
+  geom_sf(data = rinjani_highway$osm_lines, aes(color = highway)) +
+  labs(title = "Open Street Map `highway` attribute in Reservoir Jatiluhur National Park")
+```
+```{r}
+rinjani_lines <- st_transform(rinjani_highway$osm_lines, crs = crs(croptiff))
+unique(rinjani_highway$osm_lines$highway)
+```
+
+```{r}
+trails <-  rinjani_lines %>%
+  filter(highway %in% c("path", "track"))
+
+footpaths <-  rinjani_lines %>%
+  filter(highway %in% c( "steps", "footway"))
+
+roads <-  rinjani_lines %>%
+  filter(highway %in% c(
+    "tertiary",
+    "service",
+    "unclassified",
+    "residential",
+    "secondary"
+  ))
+```
+
+```{r}
+## Pembuatan basemap
+# pDisclaimer: Running lama
+tiff_zoom <-  crop(croptiff, bbox)
+tiff_zoom_mat <-  raster_to_matrix(tiff_zoom)
+
+base_map <-  tiff_zoom_mat %>%
+  height_shade() %>%
+  add_overlay(sphere_shade(tiff_zoom_mat,
+                           texture = "desert",
+                           colorintensity = 5),
+              alphalayer = 0.5) %>%
+  add_water(detect_water(tiff_zoom_mat), color = "lightblue") %>%
+  add_shadow(lamb_shade(tiff_zoom_mat), 0) %>%
+  add_shadow(texture_shade(
+    tiff_zoom_mat,
+    detail = 5 / 10,
+    contrast = 8,
+    brightness = 12
+  ),
+  0.1)
+
+plot_map(base_map)
+```
+```{r}
+# Simpan peta sebagai file PNG
+save_png(hillshade = base_map, filename = "base_jatiluhur2.png")  # Pengaturan lebar, tinggi, dan resolusi
+tiff("base_jatiluhur2.tif", width = 3000, height = 3000, units = "px", res = 300)
+```
+
+```{r}
+# menambahkan aliran sungai
+rinjani_water  <-  opq(osm_bbox) %>%
+  add_osm_feature("waterway") %>%
+  osmdata_sf()
+rinjani_water
+```
+```{r}
+ggplot() +
+  geom_sf(data = rinjani_water$osm_lines, aes(color = waterway)) +
+  labs(title = "Open Street Map `waterway` attribute in Reservoir Jatiluhur National Park")
+```
+```{r}
+building <-  opq(osm_bbox) %>% 
+  add_osm_feature("building") %>% 
+  osmdata_sf() 
+
+# fasilitas umum turis
+tourism <-  opq(osm_bbox) %>% 
+  add_osm_feature("tourism") %>% 
+  osmdata_sf() 
+
+building_poly <-  st_transform(building$osm_polygons,crs=crs(croptiff))
+tourism_poly <-  st_transform(tourism$osm_polygons,crs=crs(croptiff))
+```
+
+```{r}
+building_name <- building_poly %>% filter(name %in% c("Rinjani Treking Center (abandoned)","Bukit Senaru Homestay"))
+building_build <- building_poly %>% filter(building %in% c("mosque","school", "house"))
+
+```
+
